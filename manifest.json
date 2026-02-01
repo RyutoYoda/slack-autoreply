@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Slack AI Auto-Reply",
+  "version": "1.0",
+  "description": "AI-powered auto-reply for Slack mentions using OpenAI API",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://api.openai.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Slack AI Auto-Reply"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [{
+    "matches": ["https://app.slack.com/*"],
+    "js": ["content.js"]
+  }]
+}

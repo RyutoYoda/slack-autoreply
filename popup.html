@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      width: 280px;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+    }
+    h1 {
+      font-size: 16px;
+      margin: 0 0 12px 0;
+      color: #1d1c1d;
+    }
+    .buttons {
+      display: flex;
+      gap: 8px;
+    }
+    .buttons button {
+      flex: 1;
+      padding: 10px 12px;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #downloadBtn {
+      background-color: #007a5a;
+    }
+    #downloadBtn:hover {
+      background-color: #005e44;
+    }
+    #copyBtn {
+      background-color: #1264a3;
+    }
+    #copyBtn:hover {
+      background-color: #0b4f8a;
+    }
+    .buttons button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    #status {
+      margin-top: 12px;
+      padding: 8px;
+      border-radius: 4px;
+      display: none;
+    }
+    #status.info {
+      display: block;
+      background-color: #e8f5fe;
+      color: #1264a3;
+    }
+    #status.success {
+      display: block;
+      background-color: #e8f5e9;
+      color: #007a5a;
+    }
+    #status.error {
+      display: block;
+      background-color: #fde7e9;
+      color: #e01e5a;
+    }
+    #progress {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #616061;
+    }
+    .option {
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .option input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+    }
+    .option label {
+      font-size: 13px;
+      color: #1d1c1d;
+    }
+    .option-hint {
+      font-size: 11px;
+      color: #616061;
+      margin-left: 22px;
+      margin-top: 2px;
+    }
+    .api-key-section {
+      margin: 12px 0;
+      padding: 8px;
+      background-color: #f8f8f8;
+      border-radius: 4px;
+    }
+    .api-key-section summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: #616061;
+    }
+    .api-key-input {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .api-key-input input {
+      flex: 1;
+      padding: 6px;
+      font-size: 12px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .api-key-input button {
+      padding: 6px 12px;
+      font-size: 12px;
+      background-color: #4a154b;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .api-key-input button:hover {
+      background-color: #611f69;
+    }
+    .api-key-status {
+      font-size: 11px;
+      margin-top: 4px;
+      color: #007a5a;
+    }
+  </style>
+</head>
+<body>
+  <h1>Slack「後で」エクスポート</h1>
+
+  <!-- Auto-reply section -->
+  <div style="border: 1px solid #e0e0e0; border-radius: 4px; padding: 10px; margin-bottom: 12px; background-color: #f9f9f9;">
+    <div class="option" style="margin-bottom: 0;">
+      <input type="checkbox" id="autoReplyEnabled">
+      <label for="autoReplyEnabled" style="font-weight: 600;">自動返信機能</label>
+    </div>
+    <div class="option" style="margin: 8px 0 0 22px;">
+      <input type="checkbox" id="autoSendEnabled">
+      <label for="autoSendEnabled" style="font-weight: normal;">自動送信</label>
+    </div>
+    <div class="option-hint" style="margin-left: 0; margin-top: 4px;">
+      オフの場合、返信文を入力欄に生成するだけで送信は手動
+    </div>
+  </div>
+  <div class="option">
+    <input type="checkbox" id="detailedMode">
+    <label for="detailedMode">詳細取得モード（前後メッセージ+AI分析）</label>
+  </div>
+  <div class="option-hint">※1件ずつ取得するため時間がかかります</div>
+  <div class="api-key-section">
+    <details>
+      <summary>OpenAI APIキー設定</summary>
+      <div class="api-key-input">
+        <input type="password" id="apiKey" placeholder="sk-...">
+        <button id="saveApiKey">保存</button>
+      </div>
+      <div id="apiKeyStatus" class="api-key-status"></div>
+    </details>
+  </div>
+  <div class="option" style="margin-top: 8px;">
+    <label for="limitCount">件数制限:</label>
+    <input type="number" id="limitCount" min="0" value="0" style="width: 60px; margin-left: 4px;">
+    <span style="font-size: 11px; color: #616061;">（0=全件）</span>
+  </div>
+  <div class="buttons">
+    <button id="downloadBtn">CSVダウンロード</button>
+    <button id="copyBtn">コピー (TSV)</button>
+  </div>
+  <div id="status"></div>
+  <div id="progress"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
