@@ -129,7 +129,7 @@ function startMessageObserver() {
   messageObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       if (mutation.addedNodes.length > 0) {
-        mutation.addNodes.forEach(node => {
+        mutation.addedNodes.forEach(node => {
           if (node.nodeType === Node.ELEMENT_NODE) {
             checkForMentions(node);
           }
