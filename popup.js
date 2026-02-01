@@ -1,30 +1,47 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const downloadBtn = document.getElementById('downloadBtn');
-  const copyBtn = document.getElementById('copyBtn');
-  const detailedMode = document.getElementById('detailedMode');
-  const limitCount = document.getElementById('limitCount');
-  const status = document.getElementById('status');
-  const progress = document.getElementById('progress');
   const apiKeyInput = document.getElementById('apiKey');
   const saveApiKeyBtn = document.getElementById('saveApiKey');
   const apiKeyStatus = document.getElementById('apiKeyStatus');
   const autoReplyEnabled = document.getElementById('autoReplyEnabled');
   const autoSendEnabled = document.getElementById('autoSendEnabled');
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
 
   // Load saved settings
   chrome.storage.local.get(['openaiApiKey', 'autoReplyEnabled', 'autoSendEnabled'], (result) => {
     if (result.openaiApiKey) {
       apiKeyInput.value = result.openaiApiKey;
-      apiKeyStatus.textContent = '✓ APIキー保存済み';
+      showStatus('✓ APIキー設定済み', 'success');
     }
+
     if (result.autoReplyEnabled) {
       autoReplyEnabled.checked = true;
+      updateStatusDisplay(true, result.autoSendEnabled);
     }
+
     if (result.autoSendEnabled !== undefined) {
       autoSendEnabled.checked = result.autoSendEnabled;
     } else {
-      // Default to true for backward compatibility
-      autoSendEnabled.checked = true;
+      // Default to false for safety (semi-auto mode)
+      autoSendEnabled.checked = false;
+    }
+  });
+
+  // Save API key
+  saveApiKeyBtn.addEventListener('click', () => {
+    const apiKey = apiKeyInput.value.trim();
+    if (apiKey) {
+      if (!apiKey.startsWith('sk-')) {
+        showStatus('❌ 無効なAPIキー形式です', 'error');
+        return;
+      }
+      chrome.storage.local.set({ openaiApiKey: apiKey }, () => {
+        showStatus('✓ APIキーを保存しました', 'success');
+      });
+    } else {
+      chrome.storage.local.remove('openaiApiKey', () => {
+        showStatus('APIキーを削除しました', 'error');
+      });
     }
   });
 
@@ -33,6 +50,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const enabled = autoReplyEnabled.checked;
     chrome.storage.local.set({ autoReplyEnabled: enabled });
 
+    updateStatusDisplay(enabled, autoSendEnabled.checked);
+
     // Send message to content script to enable/disable auto-reply
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab.url && tab.url.includes('app.slack.com')) {
@@ -40,6 +59,8 @@ document.addEventListener('DOMContentLoaded', () => {
         action: 'toggleAutoReply',
         enabled: enabled,
         autoSend: autoSendEnabled.checked
+      }).catch(() => {
+        // Ignore errors if content script is not ready
       });
     }
   });
@@ -49,6 +70,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const autoSend = autoSendEnabled.checked;
     chrome.storage.local.set({ autoSendEnabled: autoSend });
 
+    updateStatusDisplay(autoReplyEnabled.checked, autoSend);
+
     // Send message to content script to update auto-send setting
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab.url && tab.url.includes('app.slack.com')) {
@@ -56,105 +79,33 @@ document.addEventListener('DOMContentLoaded', () => {
         action: 'toggleAutoReply',
         enabled: autoReplyEnabled.checked,
         autoSend: autoSend
+      }).catch(() => {
+        // Ignore errors if content script is not ready
       });
     }
   });
 
-  // Save API key
-  saveApiKeyBtn.addEventListener('click', () => {
-    const apiKey = apiKeyInput.value.trim();
-    if (apiKey) {
-      chrome.storage.local.set({ openaiApiKey: apiKey }, () => {
-        apiKeyStatus.textContent = '✓ APIキーを保存しました';
-      });
-    } else {
-      chrome.storage.local.remove('openaiApiKey', () => {
-        apiKeyStatus.textContent = 'APIキーを削除しました';
-      });
-    }
-  });
+  function showStatus(message, type) {
+    apiKeyStatus.textContent = message;
+    apiKeyStatus.className = `status-indicator ${type}`;
 
-  function setStatus(message, type) {
-    status.textContent = message;
-    status.className = type;
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      apiKeyStatus.className = 'status-indicator';
+    }, 3000);
   }
 
-  function setProgress(message) {
-    progress.textContent = message;
-  }
-
-  function setButtonsDisabled(disabled) {
-    downloadBtn.disabled = disabled;
-    copyBtn.disabled = disabled;
-  }
-
-  async function executeAction(action, successMessage, copyToClipboard = false) {
-    setButtonsDisabled(true);
-    setStatus('処理中...', 'info');
-    setProgress('');
-
-    let port = null;
-
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-      if (!tab.url || !tab.url.includes('app.slack.com')) {
-        setStatus('Slackのページで実行してください', 'error');
-        setButtonsDisabled(false);
-        return;
-      }
-
-      // Establish connection for progress updates (for detailed mode)
-      if (action.includes('Detailed')) {
-        port = chrome.tabs.connect(tab.id, { name: 'progress' });
-        port.onMessage.addListener((msg) => {
-          if (msg.message) {
-            setProgress(msg.message);
-          } else if (msg.total > 0) {
-            setProgress(`${msg.current} / ${msg.total} 件処理中...`);
-          }
-        });
-      }
-
-      const limit = parseInt(limitCount.value, 10) || 0;
-
-      // Get API key for detailed mode
-      let apiKey = null;
-      if (action.includes('Detailed')) {
-        const stored = await chrome.storage.local.get(['openaiApiKey']);
-        apiKey = stored.openaiApiKey || null;
-      }
-
-      const response = await chrome.tabs.sendMessage(tab.id, { action, limit, apiKey });
-
-      if (response.success) {
-        if (copyToClipboard && response.tsvData) {
-          await navigator.clipboard.writeText(response.tsvData);
-        }
-        setStatus(`${response.count}件のメッセージを${successMessage}`, 'success');
-        setProgress('');
+  function updateStatusDisplay(enabled, autoSend) {
+    if (enabled) {
+      statusDot.className = 'status-dot active';
+      if (autoSend) {
+        statusText.textContent = '自動返信: 有効（完全自動）';
       } else {
-        setStatus(response.error || 'エラーが発生しました', 'error');
-        setProgress('');
+        statusText.textContent = '自動返信: 有効（半自動）';
       }
-    } catch (error) {
-      console.error('Error:', error);
-      setStatus('エラー: ページを再読み込みしてください', 'error');
-      setProgress('');
-    } finally {
-      if (port) port.disconnect();
+    } else {
+      statusDot.className = 'status-dot inactive';
+      statusText.textContent = '自動返信: オフ';
     }
-
-    setButtonsDisabled(false);
   }
-
-  downloadBtn.addEventListener('click', () => {
-    const action = detailedMode.checked ? 'exportCSVDetailed' : 'exportCSV';
-    executeAction(action, 'ダウンロードしました');
-  });
-
-  copyBtn.addEventListener('click', () => {
-    const action = detailedMode.checked ? 'copyTSVDetailed' : 'copyTSV';
-    executeAction(action, 'コピーしました', true);
-  });
 });
