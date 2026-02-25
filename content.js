@@ -1,4 +1,5 @@
 // Slack AI Auto-Reply - Content Script
+console.log('=== SLACK-AI EXTENSION LOADED ===');
 
 // Log prefix for filtering
 const LOG_PREFIX = 'SLACK-AI:';
@@ -6,12 +7,18 @@ function log(...args) {
   console.log(LOG_PREFIX, ...args);
 }
 
+// 即座にログ出力
+log('Content script starting...');
+
 // Auto-reply state
 let autoReplyEnabled = false;
 let autoSendEnabled = false;
 let messageObserver = null;
 let currentUserId = null;
 let processedMessages = new Set();
+
+// テストモード: 自分のメンションでも動作する
+const TEST_MODE = true;
 
 // Listen for toggle auto-reply message from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -52,6 +59,37 @@ function initAutoReply() {
 
   // Start observing for new messages
   startMessageObserver();
+
+  // TEST_MODE: 既存メッセージもスキャン（5秒後）
+  if (TEST_MODE) {
+    setTimeout(() => {
+      log('[TEST MODE] Scanning existing messages...');
+      scanExistingMessages();
+    }, 5000);
+  }
+}
+
+// 既存のメッセージをスキャン
+function scanExistingMessages() {
+  // メンションを含む要素を直接探す
+  const mentionElements = document.querySelectorAll('.c-member_slug--mention, [data-stringify-type="mention"]');
+  log(`[TEST MODE] Found ${mentionElements.length} mentions on page`);
+
+  // 各メンションの親メッセージを処理
+  const processedParents = new Set();
+  for (const mention of mentionElements) {
+    // メッセージのコンテナを探す
+    const msgContainer = mention.closest('[data-qa="virtual-list-item"]') ||
+                         mention.closest('.c-message_kit__background') ||
+                         mention.closest('[data-qa="message_container"]') ||
+                         mention.closest('.p-rich_text_block')?.parentElement?.parentElement;
+
+    if (msgContainer && !processedParents.has(msgContainer)) {
+      processedParents.add(msgContainer);
+      log(`[TEST MODE] Processing message with mention: "${mention.textContent}"`);
+      checkForMentions(msgContainer);
+    }
+  }
 }
 
 function stopAutoReply() {
@@ -151,27 +189,45 @@ async function checkForMentions(element) {
   const messages = element.querySelectorAll ? element.querySelectorAll('.c-message_kit__background, [data-qa="message_container"]') : [];
   const allMessages = [element, ...Array.from(messages)];
 
+  log(`Checking ${allMessages.length} elements for mentions`);
+
   for (const msg of allMessages) {
     if (!msg.querySelector) continue;
 
     // Get message ID to avoid duplicates
     const messageId = msg.closest('[data-item-key]')?.getAttribute('data-item-key');
+
+    // デバッグ: メッセージのテキストを表示
+    const msgText = msg.textContent?.substring(0, 50) || '';
+    log(`Message: "${msgText}..." ID: ${messageId || 'none'}`);
+
     if (!messageId || processedMessages.has(messageId)) {
       continue;
     }
 
-    // Check for mentions
-    const mentions = msg.querySelectorAll('.c-mention, [data-qa="mention"]');
+    // Check for mentions - 新しいセレクタ
+    const mentions = msg.querySelectorAll('.c-member_slug--mention, [data-stringify-type="mention"], .c-mention');
+    log(`Found ${mentions.length} mention elements in message`);
     let isMentioned = false;
 
     for (const mention of mentions) {
       const mentionText = mention.textContent.trim();
-      const mentionUserId = mention.getAttribute('data-user-id');
+      const mentionUserId = mention.getAttribute('data-member-id') || mention.getAttribute('data-user-id');
 
-      // Check if mention is for current user
-      if (mentionUserId === currentUserId || mentionText === '@channel' || mentionText === '@here') {
-        isMentioned = true;
-        break;
+      // TEST_MODE: 全てのメンションに反応 / 通常: 自分宛てのみ
+      if (TEST_MODE) {
+        // テストモード: どのメンションでも反応
+        if (mentions.length > 0) {
+          isMentioned = true;
+          log(`[TEST MODE] Mention found: ${mentionText}`);
+          break;
+        }
+      } else {
+        // 通常モード: 自分宛てのメンションのみ
+        if (mentionUserId === currentUserId || mentionText === '@channel' || mentionText === '@here') {
+          isMentioned = true;
+          break;
+        }
       }
     }
 
@@ -199,22 +255,13 @@ async function checkForMentions(element) {
 
 async function handleAutoReply(messageElement, messageText, senderName) {
   try {
-    // Get API key
-    const storage = await chrome.storage.local.get(['openaiApiKey']);
-    const apiKey = storage.openaiApiKey;
-
-    if (!apiKey) {
-      log('Error: No API key configured');
-      return;
-    }
-
-    log('Generating auto-reply...');
+    log('Generating auto-reply with Ollama...');
 
     // Get context messages
     const surroundingMessages = await getContextMessages(messageElement);
 
-    // Generate reply
-    const replyText = await generateAutoReply(apiKey, messageText, surroundingMessages, senderName);
+    // Generate reply (no API key needed for local Ollama)
+    const replyText = await generateAutoReply(messageText, surroundingMessages, senderName);
 
     if (!replyText) {
       log('Error: No reply generated');
@@ -258,11 +305,10 @@ async function getContextMessages(messageElement) {
   return messages.join('\n---\n');
 }
 
-async function generateAutoReply(apiKey, messageText, surroundingMessages, senderName) {
-  // Call background script
+async function generateAutoReply(messageText, surroundingMessages, senderName) {
+  // Call background script (Ollama - no API key needed)
   const result = await chrome.runtime.sendMessage({
     action: 'generateAutoReply',
-    apiKey,
     messageText,
     surroundingMessages,
     senderName
@@ -275,48 +321,51 @@ async function sendReply(replyText, shouldSend) {
   // Find message input box
   const inputBox = document.querySelector('[data-qa="message_input"]') ||
                    document.querySelector('.ql-editor[contenteditable="true"]') ||
-                   document.querySelector('[role="textbox"][contenteditable="true"]');
+                   document.querySelector('[role="textbox"][contenteditable="true"]') ||
+                   document.querySelector('.p-message_input_field .ql-editor');
 
   if (!inputBox) {
     log('Error: Could not find message input box');
     return;
   }
 
-  // Focus and insert text
+  // Focus
   inputBox.focus();
   await sleep(100);
 
-  inputBox.textContent = replyText;
+  // Clear existing content and insert new text using execCommand
+  document.execCommand('selectAll', false, null);
+  document.execCommand('insertText', false, replyText);
 
-  // Trigger input event
-  const inputEvent = new Event('input', { bubbles: true });
-  inputBox.dispatchEvent(inputEvent);
-
-  await sleep(200);
+  await sleep(300);
 
   if (shouldSend) {
-    // Auto-send mode: click send button
-    const sendButton = document.querySelector('[data-qa="texty_send_button"]') ||
-                       document.querySelector('button[aria-label*="送信"]') ||
-                       document.querySelector('button[aria-label*="Send"]');
+    // Wait for Slack to enable send button
+    await sleep(500);
 
-    if (sendButton && !sendButton.disabled) {
+    // Try clicking send button
+    const sendButton = document.querySelector('[data-qa="texty_send_button"]:not([aria-disabled="true"])') ||
+                       document.querySelector('button[aria-label*="送信"]:not([aria-disabled="true"])') ||
+                       document.querySelector('button[aria-label*="Send"]:not([aria-disabled="true"])');
+
+    if (sendButton) {
       sendButton.click();
       log('Message sent automatically');
     } else {
-      log('Warning: Send button not found or disabled');
-      // Fallback: press Enter
+      log('Send button disabled, trying Cmd+Enter...');
+      // Fallback: Cmd+Enter (Mac) to send
       const enterEvent = new KeyboardEvent('keydown', {
         key: 'Enter',
         code: 'Enter',
         keyCode: 13,
         which: 13,
-        bubbles: true
+        metaKey: true,
+        bubbles: true,
+        cancelable: true
       });
       inputBox.dispatchEvent(enterEvent);
     }
   } else {
-    // Semi-auto mode: just insert text
     log('Reply inserted (semi-auto mode - manual send required)');
   }
 }

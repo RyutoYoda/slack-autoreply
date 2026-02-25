@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
-  "name": "Slack AI Auto-Reply",
-  "version": "1.0",
-  "description": "AI-powered auto-reply for Slack mentions using OpenAI API",
+  "name": "Slack AI Auto-Reply (Qwen3)",
+  "version": "2.0",
+  "description": "AI-powered auto-reply for Slack mentions using local Ollama + Qwen3",
   "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": ["https://api.openai.com/*"],
+  "host_permissions": ["http://localhost:11434/*"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Slack AI Auto-Reply"

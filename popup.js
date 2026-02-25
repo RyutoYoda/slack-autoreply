@@ -1,19 +1,13 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const apiKeyInput = document.getElementById('apiKey');
-  const saveApiKeyBtn = document.getElementById('saveApiKey');
-  const apiKeyStatus = document.getElementById('apiKeyStatus');
+  const testConnectionBtn = document.getElementById('testConnection');
+  const connectionStatus = document.getElementById('connectionStatus');
   const autoReplyEnabled = document.getElementById('autoReplyEnabled');
   const autoSendEnabled = document.getElementById('autoSendEnabled');
   const statusDot = document.getElementById('statusDot');
   const statusText = document.getElementById('statusText');
 
   // Load saved settings
-  chrome.storage.local.get(['openaiApiKey', 'autoReplyEnabled', 'autoSendEnabled'], (result) => {
-    if (result.openaiApiKey) {
-      apiKeyInput.value = result.openaiApiKey;
-      showStatus('✓ APIキー設定済み', 'success');
-    }
-
+  chrome.storage.local.get(['autoReplyEnabled', 'autoSendEnabled'], (result) => {
     if (result.autoReplyEnabled) {
       autoReplyEnabled.checked = true;
       updateStatusDisplay(true, result.autoSendEnabled);
@@ -22,28 +16,31 @@ document.addEventListener('DOMContentLoaded', () => {
     if (result.autoSendEnabled !== undefined) {
       autoSendEnabled.checked = result.autoSendEnabled;
     } else {
-      // Default to false for safety (semi-auto mode)
       autoSendEnabled.checked = false;
     }
   });
 
-  // Save API key
-  saveApiKeyBtn.addEventListener('click', () => {
-    const apiKey = apiKeyInput.value.trim();
-    if (apiKey) {
-      if (!apiKey.startsWith('sk-')) {
-        showStatus('❌ 無効なAPIキー形式です', 'error');
-        return;
-      }
-      chrome.storage.local.set({ openaiApiKey: apiKey }, () => {
-        showStatus('✓ APIキーを保存しました', 'success');
-      });
-    } else {
-      chrome.storage.local.remove('openaiApiKey', () => {
-        showStatus('APIキーを削除しました', 'error');
-      });
-    }
+  // Test Ollama connection on load
+  testOllamaConnection();
+
+  // Test connection button
+  testConnectionBtn.addEventListener('click', () => {
+    testOllamaConnection();
   });
+
+  async function testOllamaConnection() {
+    showStatus('接続テスト中...', 'success');
+    try {
+      const result = await chrome.runtime.sendMessage({ action: 'testOllamaConnection' });
+      if (result.success) {
+        showStatus('✓ Ollama接続OK (Qwen3)', 'success');
+      } else {
+        showStatus('❌ ' + result.error, 'error');
+      }
+    } catch (error) {
+      showStatus('❌ 拡張機能エラー: ' + error.message, 'error');
+    }
+  }
 
   // Save auto-reply setting
   autoReplyEnabled.addEventListener('change', async () => {
@@ -52,16 +49,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateStatusDisplay(enabled, autoSendEnabled.checked);
 
-    // Send message to content script to enable/disable auto-reply
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab.url && tab.url.includes('app.slack.com')) {
       chrome.tabs.sendMessage(tab.id, {
         action: 'toggleAutoReply',
         enabled: enabled,
         autoSend: autoSendEnabled.checked
-      }).catch(() => {
-        // Ignore errors if content script is not ready
-      });
+      }).catch(() => {});
     }
   });
 
@@ -72,27 +66,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateStatusDisplay(autoReplyEnabled.checked, autoSend);
 
-    // Send message to content script to update auto-send setting
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab.url && tab.url.includes('app.slack.com')) {
       chrome.tabs.sendMessage(tab.id, {
         action: 'toggleAutoReply',
         enabled: autoReplyEnabled.checked,
         autoSend: autoSend
-      }).catch(() => {
-        // Ignore errors if content script is not ready
-      });
+      }).catch(() => {});
     }
   });
 
   function showStatus(message, type) {
-    apiKeyStatus.textContent = message;
-    apiKeyStatus.className = `status-indicator ${type}`;
-
-    // Auto-hide after 3 seconds
-    setTimeout(() => {
-      apiKeyStatus.className = 'status-indicator';
-    }, 3000);
+    connectionStatus.textContent = message;
+    connectionStatus.className = `status-indicator ${type}`;
   }
 
   function updateStatusDisplay(enabled, autoSend) {

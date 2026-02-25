@@ -301,16 +301,15 @@
         </div>
       </div>
 
-      <!-- API Key Settings -->
+      <!-- Ollama Connection -->
       <div class="section">
         <div class="section-title">
-          🔑 OpenAI APIキー
+          🦙 Ollama接続 (Qwen3)
         </div>
         <div class="api-key-input">
-          <input type="password" id="apiKey" placeholder="sk-proj-...">
-          <button id="saveApiKey">保存</button>
+          <button id="testConnection" style="flex: 1;">接続テスト</button>
         </div>
-        <div id="apiKeyStatus" class="status-indicator"></div>
+        <div id="connectionStatus" class="status-indicator"></div>
       </div>
 
       <!-- Status Display -->
@@ -324,7 +323,7 @@
     </div>
 
     <div class="footer">
-      Powered by OpenAI GPT-4
+      Powered by Ollama + Qwen3 (Local)
     </div>
   </div>
 
