@@ -99,11 +99,18 @@ function isActivityPage() {
 
 // メンションタブが選択されているかを判定
 function isMentionsTabActive() {
-  // メンションタブがアクティブかチェック
-  const mentionsTab = document.querySelector('[data-qa="mentions-tab"][aria-selected="true"]') ||
-                      document.querySelector('button[aria-selected="true"]:has-text("メンション")') ||
-                      document.querySelector('.p-activity_ia4_page__tab--selected[data-tab="mentions"]');
-  return mentionsTab !== null;
+  // メンションタブがアクティブかチェック（複数のセレクタで対応）
+  const tabs = document.querySelectorAll('[role="tab"], .p-activity_ia4_page__tab, button[data-qa]');
+  for (const tab of tabs) {
+    const text = tab.textContent.trim();
+    const isSelected = tab.getAttribute('aria-selected') === 'true' ||
+                       tab.classList.contains('p-activity_ia4_page__tab--selected') ||
+                       tab.classList.contains('c-tabs__tab--active');
+    if ((text.includes('メンション') || text.includes('Mentions')) && isSelected) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // アクティビティ画面の監視を開始
@@ -172,7 +179,13 @@ function startActivityMonitor() {
 
 // アクティビティ画面のメンションをスキャン（最新1件のみ）
 async function scanActivityMentions() {
-  log('[ACTIVITY] Checking top activity...');
+  // メンションタブの時だけ動作（「すべて」タブでは動かない）
+  if (!isMentionsTabActive()) {
+    log('[ACTIVITY] Not on mentions tab, skipping');
+    return;
+  }
+
+  log('[ACTIVITY] Checking top mention...');
 
   // アクティビティアイテムを取得
   const activityItems = document.querySelectorAll('[data-qa="activity-item-container"]');
