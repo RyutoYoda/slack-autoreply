@@ -248,30 +248,51 @@ async function scanActivityMentions() {
     return;
   }
 
-  // 2. スレッド内のメッセージ全体を読む
+  // 2. スレッド全体を読む（親メッセージ + 全返信）
   await sleep(500);
-  const threadMessages = document.querySelectorAll('.c-message_kit__blocks, .p-rich_text_section');
-  let fullMessageText = '';
-  let mentionSender = senderName;
 
-  for (const msg of threadMessages) {
-    const hasMention = msg.querySelector('.c-member_slug--mention, [data-stringify-type="mention"]');
-    if (hasMention) {
-      fullMessageText = msg.textContent.trim();
-      const senderEl = msg.closest('.c-message_kit__background')?.querySelector('.c-message__sender_link');
-      if (senderEl) mentionSender = senderEl.textContent.trim();
+  // スレッド内の全メッセージを取得
+  const messageContainers = document.querySelectorAll('.c-message_kit__background, [data-qa="message_container"]');
+  const threadContext = [];
+  let lastMentionMessage = '';
+  let lastMentionSender = senderName;
+
+  for (const container of messageContainers) {
+    // 送信者を取得
+    const senderEl = container.querySelector('.c-message__sender_link, .c-message_kit__sender');
+    const sender = senderEl?.textContent.trim() || 'Unknown';
+
+    // メッセージ本文を取得
+    const messageBlock = container.querySelector('.c-message_kit__blocks, .p-rich_text_section');
+    const msgText = messageBlock?.textContent.trim() || '';
+
+    if (msgText) {
+      threadContext.push(`${sender}: ${msgText}`);
+
+      // メンションが含まれているかチェック（最後のメンションを記録）
+      const hasMention = messageBlock?.querySelector('.c-member_slug--mention, [data-stringify-type="mention"]');
+      if (hasMention) {
+        lastMentionMessage = msgText;
+        lastMentionSender = sender;
+      }
     }
   }
 
-  if (!fullMessageText) {
-    fullMessageText = messageText;
+  // フォールバック
+  if (!lastMentionMessage) {
+    lastMentionMessage = messageText;
   }
 
-  log(`[ACTIVITY] Message: "${fullMessageText.substring(0, 60)}..."`);
+  // 文脈を結合（最大10メッセージ）
+  const contextMessages = threadContext.slice(-10).join('\n');
 
-  // 3. 返信を生成
-  log('[ACTIVITY] Generating reply...');
-  const replyText = await generateAutoReply(fullMessageText, '', mentionSender);
+  log(`[ACTIVITY] Thread context (${threadContext.length} messages)`);
+  log(`[ACTIVITY] Last mention from: ${lastMentionSender}`);
+  log(`[ACTIVITY] Last mention: "${lastMentionMessage.substring(0, 60)}..."`);
+
+  // 3. 返信を生成（文脈付き）
+  log('[ACTIVITY] Generating reply with context...');
+  const replyText = await generateAutoReply(lastMentionMessage, contextMessages, lastMentionSender);
 
   if (replyText) {
     log(`[ACTIVITY] Reply: ${replyText.substring(0, 50)}...`);

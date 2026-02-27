@@ -56,14 +56,15 @@ async function generateAutoReply(messageText, surroundingMessages, senderName) {
   log('generateAutoReply called with:', { messageText: messageText?.substring(0, 50), senderName });
 
   const prompt = `あなたは私の代わりにSlackで返信を書きます。私になりきって、自然な返信を作成してください。
-
-【状況】
-${senderName}さんから以下のメッセージが届きました。
-${surroundingMessages ? `\n【会話の流れ】\n${surroundingMessages}\n` : ''}
-【受信メッセージ】
-${messageText}
+${surroundingMessages ? `
+【スレッドの会話履歴】
+${surroundingMessages}
+` : ''}
+【返信すべきメッセージ】
+${senderName}さん: ${messageText}
 
 【返信ルール】
+- 会話の文脈を理解して、最後の質問・依頼に対して返信する
 - ビジネスカジュアル（丁寧だけど堅すぎない、普段の仕事のやり取り風）
 - 「です・ます」調、でも「〜ですね！」「承知です！」のような柔らかさOK
 - 1〜2文で簡潔に
