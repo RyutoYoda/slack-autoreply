@@ -14,11 +14,27 @@ log('Content script starting...');
 let autoReplyEnabled = false;
 let autoSendEnabled = false;
 let messageObserver = null;
+let activityObserver = null;
 let currentUserId = null;
 let processedMessages = new Set();
+let processedActivityItems = new Set();
+let pendingReply = null; // アクティビティから遷移後に返信するための情報
 
-// テストモード: 自分のメンションでも動作する
-const TEST_MODE = true;
+// テストモード: 自分のメンションでも動作する（本番はfalse）
+const TEST_MODE = false;
+
+// アクティビティ監視用のObserver
+let activityListObserver = null;
+let activityScanInterval = null;
+
+// 定期スキャンの間隔（ミリ秒）- 0で無効
+const ACTIVITY_SCAN_INTERVAL = 30000; // 30秒
+
+// 前回チェックした一番上のアクティビティのキー
+let lastTopActivityKey = null;
+
+// 1回のスキャンで処理するメンションの最大数（最新1件のみ）
+const MAX_MENTIONS_PER_SCAN = 1;
 
 // Listen for toggle auto-reply message from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -60,12 +76,345 @@ function initAutoReply() {
   // Start observing for new messages
   startMessageObserver();
 
+  // アクティビティ画面の監視を開始
+  startActivityMonitor();
+
   // TEST_MODE: 既存メッセージもスキャン（5秒後）
   if (TEST_MODE) {
     setTimeout(() => {
       log('[TEST MODE] Scanning existing messages...');
       scanExistingMessages();
     }, 5000);
+  }
+
+  // ページ遷移後の返信処理をチェック
+  checkPendingReply();
+}
+
+// アクティビティ画面かどうかを判定
+function isActivityPage() {
+  return document.querySelector('.p-activity_ia4_page__item_container') !== null ||
+         document.querySelector('[data-qa="activity-item-container"]') !== null;
+}
+
+// メンションタブが選択されているかを判定
+function isMentionsTabActive() {
+  // メンションタブがアクティブかチェック
+  const mentionsTab = document.querySelector('[data-qa="mentions-tab"][aria-selected="true"]') ||
+                      document.querySelector('button[aria-selected="true"]:has-text("メンション")') ||
+                      document.querySelector('.p-activity_ia4_page__tab--selected[data-tab="mentions"]');
+  return mentionsTab !== null;
+}
+
+// アクティビティ画面の監視を開始
+function startActivityMonitor() {
+  log('Starting activity monitor...');
+
+  // === 1. イベント駆動: 新しいメンションが来たら即反応 ===
+  const setupActivityObserver = () => {
+    if (activityListObserver) {
+      activityListObserver.disconnect();
+    }
+
+    const activityList = document.querySelector('.p-activity_ia4_page__item_container') ||
+                         document.querySelector('[data-qa="activity-list"]') ||
+                         document.querySelector('.p-activity_ia4_page');
+
+    if (!activityList) {
+      setTimeout(setupActivityObserver, 2000);
+      return;
+    }
+
+    log('[ACTIVITY] Event listener ready - waiting for new mentions...');
+
+    activityListObserver = new MutationObserver((mutations) => {
+      if (!autoReplyEnabled) return;
+
+      for (const mutation of mutations) {
+        if (mutation.addedNodes.length > 0) {
+          log('[ACTIVITY] New mention detected!');
+          setTimeout(() => scanActivityMentions(), 500);
+          break;
+        }
+      }
+    });
+
+    activityListObserver.observe(activityList, {
+      childList: true,
+      subtree: true
+    });
+  };
+
+  // ページ変更を監視
+  const pageObserver = new MutationObserver(() => {
+    if (isActivityPage() && !activityListObserver) {
+      setupActivityObserver();
+    }
+  });
+
+  pageObserver.observe(document.body, { childList: true, subtree: true });
+
+  if (isActivityPage()) {
+    setupActivityObserver();
+  }
+
+  // === 2. 定期スキャン: テスト用（ACTIVITY_SCAN_INTERVAL > 0 の場合のみ） ===
+  if (ACTIVITY_SCAN_INTERVAL > 0) {
+    log(`[ACTIVITY] Periodic scan enabled: every ${ACTIVITY_SCAN_INTERVAL / 1000}s`);
+    activityScanInterval = setInterval(() => {
+      if (autoReplyEnabled && isActivityPage()) {
+        log('[ACTIVITY] Periodic scan...');
+        scanActivityMentions();
+      }
+    }, ACTIVITY_SCAN_INTERVAL);
+  }
+}
+
+// アクティビティ画面のメンションをスキャン（最新1件のみ）
+async function scanActivityMentions() {
+  log('[ACTIVITY] Checking top activity...');
+
+  // アクティビティアイテムを取得
+  const activityItems = document.querySelectorAll('[data-qa="activity-item-container"]');
+
+  if (activityItems.length === 0) {
+    log('[ACTIVITY] No activity items found');
+    return;
+  }
+
+  // 一番上を取得（アプリなら次を「一番上」とする）
+  let item = activityItems[0];
+  let itemKey = item.closest('[data-item-key]')?.getAttribute('data-item-key');
+
+  // アプリかチェック
+  const isApp = item.querySelector('.c-app_icon, [data-qa="app-icon"], .p-activity_ia4_page__item__app_icon') ||
+                item.querySelector('[data-qa="activity-item-sender-app"]');
+
+  if (isApp && activityItems.length > 1) {
+    log('[ACTIVITY] Top is app, using next as top');
+    item = activityItems[1];
+    itemKey = item.closest('[data-item-key]')?.getAttribute('data-item-key');
+  }
+
+  // 前回と同じなら何もしない
+  if (itemKey === lastTopActivityKey) {
+    log('[ACTIVITY] Same as last, skipping');
+    return;
+  }
+
+  // 既に処理済みならスキップ
+  if (processedActivityItems.has(itemKey)) {
+    log('[ACTIVITY] Already processed');
+    lastTopActivityKey = itemKey;
+    return;
+  }
+
+  // メンションが含まれているかチェック
+  const mentionElement = item.querySelector('.c-member_slug--mention, [data-stringify-type="mention"], .c-member_slug');
+  if (!mentionElement) {
+    log('[ACTIVITY] No mention in top item');
+    lastTopActivityKey = itemKey;
+    return;
+  }
+
+  log(`[ACTIVITY] New mention found: ${itemKey}`);
+  lastTopActivityKey = itemKey;
+  processedActivityItems.add(itemKey);
+
+  // メッセージ情報を取得
+  const messageText = item.querySelector('[data-qa="activity-item-message"]')?.textContent.trim() || '';
+  const senderName = item.querySelector('.p-activity_ia4_page__item__senders')?.textContent.trim() || 'Unknown';
+
+  log(`[ACTIVITY] From: ${senderName}`);
+
+  // 1. 開く - メッセージ部分をクリック
+  log('[ACTIVITY] Opening thread...');
+  const messageArea = item.querySelector('[data-qa="activity-item-message"]') || item;
+  messageArea.click();
+
+  // スレッドが開くのを待つ
+  let threadInput = null;
+  for (let i = 0; i < 10; i++) {
+    await sleep(500);
+    threadInput = document.querySelector('[data-qa="texty_input"][contenteditable="true"]');
+    if (threadInput) {
+      log('[ACTIVITY] Thread opened!');
+      break;
+    }
+  }
+
+  if (!threadInput) {
+    log('[ACTIVITY] Thread did not open');
+    return;
+  }
+
+  // 2. スレッド内のメッセージ全体を読む
+  await sleep(500);
+  const threadMessages = document.querySelectorAll('.c-message_kit__blocks, .p-rich_text_section');
+  let fullMessageText = '';
+  let mentionSender = senderName;
+
+  for (const msg of threadMessages) {
+    const hasMention = msg.querySelector('.c-member_slug--mention, [data-stringify-type="mention"]');
+    if (hasMention) {
+      fullMessageText = msg.textContent.trim();
+      const senderEl = msg.closest('.c-message_kit__background')?.querySelector('.c-message__sender_link');
+      if (senderEl) mentionSender = senderEl.textContent.trim();
+    }
+  }
+
+  if (!fullMessageText) {
+    fullMessageText = messageText;
+  }
+
+  log(`[ACTIVITY] Message: "${fullMessageText.substring(0, 60)}..."`);
+
+  // 3. 返信を生成
+  log('[ACTIVITY] Generating reply...');
+  const replyText = await generateAutoReply(fullMessageText, '', mentionSender);
+
+  if (replyText) {
+    log(`[ACTIVITY] Reply: ${replyText.substring(0, 50)}...`);
+
+    // Quillエディタに入力
+    threadInput.focus();
+    await sleep(100);
+    document.execCommand('selectAll', false, null);
+    document.execCommand('insertText', false, replyText);
+
+    await sleep(500);
+    log(`[ACTIVITY] Input done`);
+
+    // 送信
+    await sleep(500);
+    const sendButton = document.querySelector('[data-qa="texty_send_button"][aria-disabled="false"]');
+
+    if (autoSendEnabled && sendButton) {
+      sendButton.click();
+      log('[ACTIVITY] Sent!');
+      await sleep(500);
+    } else {
+      log('[ACTIVITY] Draft ready');
+    }
+  }
+
+  // 4. 閉じる
+  await sleep(1000);
+  const closeButton = document.querySelector('button[aria-label="閉じる"]') ||
+                      document.querySelector('button[data-qa="close"]');
+
+  if (closeButton) {
+    closeButton.click();
+    log('[ACTIVITY] Closed');
+  } else {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  }
+
+  log('[ACTIVITY] Done');
+}
+
+// ページ遷移後の返信処理をチェック
+async function checkPendingReply() {
+  // localStorageから保留中の返信情報を取得
+  const savedReply = localStorage.getItem('slack_ai_pending_reply');
+  if (!savedReply) {
+    return;
+  }
+
+  const replyInfo = JSON.parse(savedReply);
+
+  // 古すぎる場合は無視（5分以上前）
+  if (Date.now() - replyInfo.timestamp > 5 * 60 * 1000) {
+    localStorage.removeItem('slack_ai_pending_reply');
+    return;
+  }
+
+  // アクティビティ画面の場合は処理しない（チャンネルに遷移するまで待つ）
+  if (isActivityPage()) {
+    return;
+  }
+
+  log('[PENDING] Processing pending reply...');
+
+  // 保留中の返信情報をクリア
+  localStorage.removeItem('slack_ai_pending_reply');
+  const shouldReturnToActivity = replyInfo.returnToActivity;
+  pendingReply = null;
+
+  // 少し待ってからメッセージを探す
+  await sleep(2000);
+
+  try {
+    // ハイライトされているメッセージを探す（遷移直後はハイライトされている）
+    let targetMessage = document.querySelector('.c-message_kit--highlight') ||
+                        document.querySelector('[data-qa="message_container"].c-message_kit--highlight');
+
+    // ハイライトがない場合、最新のメンションを含むメッセージを探す
+    if (!targetMessage) {
+      const mentionElements = document.querySelectorAll('.c-member_slug--mention, [data-stringify-type="mention"]');
+      for (const mention of mentionElements) {
+        const msgContainer = mention.closest('[data-qa="virtual-list-item"]') ||
+                             mention.closest('.c-message_kit__background');
+        if (msgContainer) {
+          targetMessage = msgContainer;
+          // 最後（最新）のものを使う
+        }
+      }
+    }
+
+    log(`[PENDING] Target message found: ${targetMessage ? 'yes' : 'no'}`);
+
+    // 返信を生成
+    const replyText = await generateAutoReply(replyInfo.messageText, '', replyInfo.senderName);
+
+    if (!replyText) {
+      log('[PENDING] Error: No reply generated');
+      if (shouldReturnToActivity) {
+        returnToActivityPage();
+      }
+      return;
+    }
+
+    log(`[PENDING] Generated reply: ${replyText}`);
+
+    // スレッドで返信
+    if (targetMessage) {
+      await sendReplyInThread(targetMessage, replyText, autoSendEnabled);
+    } else {
+      log('[PENDING] Target message not found, using channel input...');
+      await sendReply(replyText, autoSendEnabled);
+    }
+
+    log('[PENDING] Reply completed');
+
+    // アクティビティ画面に戻って次のメンションを処理
+    if (shouldReturnToActivity) {
+      await sleep(2000);
+      returnToActivityPage();
+    }
+  } catch (error) {
+    console.error(LOG_PREFIX, '[PENDING] Error:', error);
+    if (shouldReturnToActivity) {
+      returnToActivityPage();
+    }
+  }
+}
+
+// アクティビティ画面に戻る
+function returnToActivityPage() {
+  log('[PENDING] Returning to activity page...');
+
+  // アクティビティボタンをクリック
+  const activityButton = document.querySelector('[data-qa="activity"]') ||
+                         document.querySelector('button[aria-label*="アクティビティ"]') ||
+                         document.querySelector('button[aria-label*="Activity"]') ||
+                         document.querySelector('.p-ia4_home_nav__item--activity');
+
+  if (activityButton) {
+    activityButton.click();
+    log('[PENDING] Clicked activity button');
+  } else {
+    log('[PENDING] Activity button not found');
   }
 }
 
@@ -98,6 +447,21 @@ function stopAutoReply() {
     messageObserver.disconnect();
     messageObserver = null;
   }
+  if (activityObserver) {
+    activityObserver.disconnect();
+    activityObserver = null;
+  }
+  if (activityListObserver) {
+    activityListObserver.disconnect();
+    activityListObserver = null;
+  }
+  if (activityScanInterval) {
+    clearInterval(activityScanInterval);
+    activityScanInterval = null;
+  }
+  // 保留中の返信もクリア
+  localStorage.removeItem('slack_ai_pending_reply');
+  pendingReply = null;
 }
 
 function getCurrentUserId() {
@@ -270,12 +634,98 @@ async function handleAutoReply(messageElement, messageText, senderName) {
 
     log(`Generated reply: ${replyText}`);
 
-    // Send the reply
-    await sendReply(replyText, autoSendEnabled);
+    // スレッドで返信
+    await sendReplyInThread(messageElement, replyText, autoSendEnabled);
 
     log('Auto-reply process completed');
   } catch (error) {
     console.error(LOG_PREFIX, 'Error in handleAutoReply:', error);
+  }
+}
+
+// スレッドで返信
+async function sendReplyInThread(messageElement, replyText, shouldSend) {
+  log('Opening thread for reply...');
+
+  // スレッドボタンを探す
+  const threadButton = messageElement.querySelector('[data-qa="message_content"] button[data-qa="start_thread"], [data-qa="reply_thread_button"]') ||
+                       messageElement.querySelector('button[aria-label*="スレッド"], button[aria-label*="thread"], button[aria-label*="返信"]');
+
+  // または、メッセージにホバーして表示されるツールバーのスレッドボタン
+  if (!threadButton) {
+    // メッセージをホバー状態にしてツールバーを表示
+    const hoverContainer = messageElement.closest('.c-message_kit__hover, [data-qa="message_container"]');
+    if (hoverContainer) {
+      hoverContainer.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      await sleep(300);
+    }
+  }
+
+  // 再度スレッドボタンを探す
+  let threadBtn = messageElement.querySelector('button[data-qa="start_thread"], button[data-qa="reply_thread_button"]') ||
+                  document.querySelector('.c-message_kit__hover_actions button[aria-label*="スレッド"]') ||
+                  document.querySelector('.c-message_kit__hover_actions button[aria-label*="thread"]');
+
+  if (threadBtn) {
+    log('Found thread button, clicking...');
+    threadBtn.click();
+    await sleep(1000);
+  } else {
+    log('Thread button not found, trying to find existing thread or reply in channel...');
+  }
+
+  // スレッドパネルの入力欄を探す
+  let inputBox = document.querySelector('[data-qa="message_input"][data-message-input="true"]') ||
+                 document.querySelector('.p-thread_view__input .ql-editor') ||
+                 document.querySelector('.p-flexpane__inside_body .ql-editor[contenteditable="true"]');
+
+  // スレッドパネルが見つからない場合はチャンネルの入力欄を使う
+  if (!inputBox) {
+    log('Thread input not found, using channel input...');
+    inputBox = document.querySelector('[data-qa="message_input"]') ||
+               document.querySelector('.ql-editor[contenteditable="true"]');
+  }
+
+  if (!inputBox) {
+    log('Error: Could not find any input box');
+    return;
+  }
+
+  // 入力欄にフォーカス
+  inputBox.focus();
+  await sleep(100);
+
+  // テキストを入力
+  document.execCommand('selectAll', false, null);
+  document.execCommand('insertText', false, replyText);
+
+  await sleep(300);
+
+  if (shouldSend) {
+    await sleep(500);
+
+    // 送信ボタンを探す（スレッドパネル内を優先）
+    const sendButton = document.querySelector('.p-flexpane__inside_body [data-qa="texty_send_button"]:not([aria-disabled="true"])') ||
+                       document.querySelector('[data-qa="texty_send_button"]:not([aria-disabled="true"])');
+
+    if (sendButton) {
+      sendButton.click();
+      log('Message sent in thread automatically');
+    } else {
+      log('Send button disabled, trying Cmd+Enter...');
+      const enterEvent = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        metaKey: true,
+        bubbles: true,
+        cancelable: true
+      });
+      inputBox.dispatchEvent(enterEvent);
+    }
+  } else {
+    log('Draft created in thread (auto-send disabled)');
   }
 }
 

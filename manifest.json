@@ -3,7 +3,7 @@
   "name": "Slack AI Auto-Reply (Qwen3)",
   "version": "2.0",
   "description": "AI-powered auto-reply for Slack mentions using local Ollama + Qwen3",
-  "permissions": ["activeTab", "scripting", "storage"],
+  "permissions": ["activeTab", "scripting", "storage", "clipboardWrite"],
   "host_permissions": ["http://localhost:11434/*"],
   "action": {
     "default_popup": "popup.html",

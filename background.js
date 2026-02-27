@@ -55,24 +55,25 @@ async function testOllamaConnection() {
 async function generateAutoReply(messageText, surroundingMessages, senderName) {
   log('generateAutoReply called with:', { messageText: messageText?.substring(0, 50), senderName });
 
-  const prompt = `あなたはSlackで自動返信を行うアシスタントです。以下のメッセージに対して、適切な返信を日本語で生成してください。
+  const prompt = `あなたは私の代わりにSlackで返信を書きます。私になりきって、自然な返信を作成してください。
 
-【送信者】
-${senderName}
-
-【メッセージ】
+【状況】
+${senderName}さんから以下のメッセージが届きました。
+${surroundingMessages ? `\n【会話の流れ】\n${surroundingMessages}\n` : ''}
+【受信メッセージ】
 ${messageText}
 
-${surroundingMessages ? `【前後の会話】\n${surroundingMessages}` : ''}
+【返信ルール】
+- ビジネスカジュアル（丁寧だけど堅すぎない、普段の仕事のやり取り風）
+- 「です・ます」調、でも「〜ですね！」「承知です！」のような柔らかさOK
+- 1〜2文で簡潔に
+- 質問には「確認します」「〇〇ですね」など具体的に反応
+- 依頼には「承知です」「対応します」など明確に応答
+- 挨拶・報告には「ありがとうございます」「確認しました」など
+- 不明点があれば素直に聞き返す
+- 絵文字は使わない
 
-返信のガイドライン:
-- 簡潔に(1-3文程度)
-- 丁寧な口調で
-- 質問には具体的に答える
-- 必要に応じて確認や追加情報を求める
-- 返信文のみを出力し、説明文は不要
-
-返信:`;
+返信文のみ出力（説明不要）:`;
 
   log(`Calling Ollama API with model ${MODEL_NAME}...`);
 
@@ -86,9 +87,10 @@ ${surroundingMessages ? `【前後の会話】\n${surroundingMessages}` : ''}
         model: MODEL_NAME,
         prompt: prompt,
         stream: false,
+        think: false,
         options: {
           temperature: 0.7,
-          num_predict: 150
+          num_predict: 300
         }
       })
     });
@@ -102,12 +104,18 @@ ${surroundingMessages ? `【前後の会話】\n${surroundingMessages}` : ''}
     }
 
     const data = await response.json();
-    log('Ollama response:', JSON.stringify(data).substring(0, 200));
+    log('Ollama response:', JSON.stringify(data).substring(0, 300));
 
     let content = data.response || '';
 
     // Clean up: remove thinking tags if present (Qwen3 sometimes adds these)
     content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    content = content.replace(/<\/think>/g, '').trim();
+
+    // If response is empty but thinking exists, log warning
+    if (!content && data.thinking) {
+      log('Warning: Response empty but thinking present, increasing num_predict may help');
+    }
 
     log('Auto-reply content:', content);
 
