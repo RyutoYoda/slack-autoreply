@@ -256,6 +256,7 @@ async function scanActivityMentions() {
   const threadContext = [];
   let lastMentionMessage = '';
   let lastMentionSender = senderName;
+  let lastMentionIsToMe = false;
 
   for (const container of messageContainers) {
     // 送信者を取得
@@ -269,13 +270,29 @@ async function scanActivityMentions() {
     if (msgText) {
       threadContext.push(`${sender}: ${msgText}`);
 
-      // メンションが含まれているかチェック（最後のメンションを記録）
-      const hasMention = messageBlock?.querySelector('.c-member_slug--mention, [data-stringify-type="mention"]');
-      if (hasMention) {
+      // メンションが含まれているかチェック
+      const mentionEl = messageBlock?.querySelector('.c-member_slug--mention, [data-stringify-type="mention"]');
+      if (mentionEl) {
         lastMentionMessage = msgText;
         lastMentionSender = sender;
+
+        // 自分宛てのメンションかチェック
+        const mentionUserId = mentionEl.getAttribute('data-member-id') || mentionEl.getAttribute('data-user-id');
+        const isBroadcast = msgText.includes('@channel') || msgText.includes('@here');
+        lastMentionIsToMe = (mentionUserId === currentUserId) || isBroadcast;
       }
     }
+  }
+
+  // 最新のメンションが自分宛てでない場合はスキップ（他の人に聞いてるパターン）
+  // ただしcurrentUserIdが取得できていない場合は処理を続行
+  if (!lastMentionIsToMe && currentUserId) {
+    log('[ACTIVITY] Last mention is not to me, skipping');
+    return;
+  }
+
+  if (!currentUserId) {
+    log('[ACTIVITY] Warning: currentUserId not set, proceeding anyway');
   }
 
   // フォールバック
@@ -290,7 +307,7 @@ async function scanActivityMentions() {
   log(`[ACTIVITY] Last mention from: ${lastMentionSender}`);
   log(`[ACTIVITY] Last mention: "${lastMentionMessage.substring(0, 60)}..."`);
 
-  // 3. 返信を生成（文脈付き）
+  // 3. 返信を生成（文脈付き、スレッド内で返信）
   log('[ACTIVITY] Generating reply with context...');
   const replyText = await generateAutoReply(lastMentionMessage, contextMessages, lastMentionSender);
 
