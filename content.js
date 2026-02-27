@@ -240,32 +240,76 @@ async function scanActivityMentions() {
 
   log(`[ACTIVITY] From: ${senderName}`);
 
-  // 1. 開く - メッセージ部分をクリック
-  log('[ACTIVITY] Opening thread...');
+  // 1. メッセージをクリックしてチャンネルに移動
+  log('[ACTIVITY] Navigating to message...');
   const messageArea = item.querySelector('[data-qa="activity-item-message"]') || item;
   messageArea.click();
 
-  // スレッドが開くのを待つ
+  // チャンネルが表示されるのを待つ
+  await sleep(1500);
+
+  // 2. ハイライトされたメッセージを見つけてスレッドを開く
+  log('[ACTIVITY] Finding message and opening thread...');
+
+  // ハイライトされたメッセージまたは最新のメッセージを探す
+  const highlightedMsg = document.querySelector('.c-message_kit--highlight, [data-qa="message_container"].c-message_kit--highlight');
+  const targetMsg = highlightedMsg || document.querySelector('.c-message_kit__background');
+
+  if (targetMsg) {
+    // メッセージにホバーしてツールバーを表示
+    targetMsg.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+    await sleep(300);
+
+    // スレッドボタンを探してクリック
+    const threadBtn = targetMsg.querySelector('button[data-qa="start_thread"], button[data-qa="reply_thread_button"]') ||
+                      document.querySelector('.c-message_actions__button[aria-label*="スレッド"]') ||
+                      document.querySelector('.c-message_actions__button[aria-label*="thread"]') ||
+                      document.querySelector('.c-message_actions__button[aria-label*="返信"]') ||
+                      document.querySelector('button[aria-label*="スレッドで返信"]');
+
+    if (threadBtn) {
+      log('[ACTIVITY] Clicking thread button...');
+      threadBtn.click();
+      await sleep(1000);
+    } else {
+      log('[ACTIVITY] Thread button not found, trying to find existing thread...');
+      // 既にスレッドがある場合、スレッド返信数をクリック
+      const threadReplyBtn = targetMsg.querySelector('.c-message__reply_count, [data-qa="message_reply_count"]');
+      if (threadReplyBtn) {
+        threadReplyBtn.click();
+        await sleep(1000);
+      }
+    }
+  }
+
+  // 3. スレッドパネルの入力欄を探す（チャンネルではなくスレッドパネル内）
   let threadInput = null;
   for (let i = 0; i < 10; i++) {
     await sleep(500);
-    threadInput = document.querySelector('[data-qa="texty_input"][contenteditable="true"]');
+    // スレッドパネル内の入力欄を優先的に探す
+    threadInput = document.querySelector('.p-flexpane__inside_body [data-qa="message_input"]') ||
+                  document.querySelector('.p-thread_view__input [data-qa="message_input"]') ||
+                  document.querySelector('.p-flexpane [contenteditable="true"]') ||
+                  document.querySelector('.p-thread_view [contenteditable="true"]');
     if (threadInput) {
-      log('[ACTIVITY] Thread opened!');
+      log('[ACTIVITY] Thread panel input found!');
       break;
     }
   }
 
   if (!threadInput) {
-    log('[ACTIVITY] Thread did not open');
+    log('[ACTIVITY] Thread panel input not found');
     return;
   }
 
   // 2. スレッド全体を読む（親メッセージ + 全返信）
   await sleep(500);
 
-  // スレッド内の全メッセージを取得
-  const messageContainers = document.querySelectorAll('.c-message_kit__background, [data-qa="message_container"]');
+  // スレッドパネル内の全メッセージを取得（スレッドパネルを優先）
+  const threadPanel = document.querySelector('.p-flexpane__inside_body, .p-thread_view');
+  const messageContainers = threadPanel
+    ? threadPanel.querySelectorAll('.c-message_kit__background, [data-qa="message_container"]')
+    : document.querySelectorAll('.c-message_kit__background, [data-qa="message_container"]');
   const threadContext = [];
   let lastMentionMessage = '';
   let lastMentionSender = senderName;
@@ -336,9 +380,11 @@ async function scanActivityMentions() {
     await sleep(500);
     log(`[ACTIVITY] Input done`);
 
-    // 送信
+    // 送信（スレッドパネル内のボタンを優先）
     await sleep(500);
-    const sendButton = document.querySelector('[data-qa="texty_send_button"][aria-disabled="false"]');
+    const sendButton = document.querySelector('.p-flexpane [data-qa="texty_send_button"][aria-disabled="false"]') ||
+                       document.querySelector('.p-thread_view [data-qa="texty_send_button"][aria-disabled="false"]') ||
+                       document.querySelector('[data-qa="texty_send_button"][aria-disabled="false"]');
 
     if (autoSendEnabled && sendButton) {
       sendButton.click();
@@ -349,16 +395,20 @@ async function scanActivityMentions() {
     }
   }
 
-  // 4. 閉じる
+  // 4. スレッドパネルを閉じる
   await sleep(1000);
-  const closeButton = document.querySelector('button[aria-label="閉じる"]') ||
+  const closeButton = document.querySelector('.p-flexpane__header button[aria-label="閉じる"]') ||
+                      document.querySelector('.p-flexpane__header button[aria-label="Close"]') ||
+                      document.querySelector('.p-thread_view__header button[data-qa="close"]') ||
+                      document.querySelector('button[aria-label="閉じる"]') ||
                       document.querySelector('button[data-qa="close"]');
 
   if (closeButton) {
     closeButton.click();
-    log('[ACTIVITY] Closed');
+    log('[ACTIVITY] Thread panel closed');
   } else {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    log('[ACTIVITY] Sent Escape key');
   }
 
   log('[ACTIVITY] Done');
