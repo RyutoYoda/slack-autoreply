@@ -30,7 +30,7 @@ cd slack-autoreply
 ```bash
 # macOS
 brew install ollama
-
+ollama serve
 # または公式サイトからダウンロード
 # https://ollama.com/download
 ```
