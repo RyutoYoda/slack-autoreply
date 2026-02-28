@@ -3,6 +3,7 @@
 <img src="https://img.shields.io/badge/Chrome_Extension-4285F4?style=flat&logo=googlechrome&logoColor=white" /> <img src="https://img.shields.io/badge/JavaScript-F7DF1E?style=flat&logo=javascript&logoColor=black" /> <img src="https://img.shields.io/badge/Ollama-000000?style=flat&logo=ollama&logoColor=white" /> <img src="https://img.shields.io/badge/Qwen3-7C3AED?style=flat&logoColor=white" /> <img src="https://img.shields.io/badge/macOS-000000?style=flat&logo=apple&logoColor=white" />
 
 ローカルLLM（Qwen3）を使ったSlack自動返信Chrome拡張機能。ローカル動作。
+
 <img width="358" height="586" alt="スクリーンショット 2026-02-28 9 12 01" src="https://github.com/user-attachments/assets/3f97cadd-7b82-4a3f-8da9-b9fdcdeed896" />
 
 ## 機能
